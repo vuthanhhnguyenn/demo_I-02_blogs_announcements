@@ -2,6 +2,17 @@ import type { NextConfig } from 'next';
 import type { RemotePattern } from 'next/dist/shared/lib/image-config';
 
 const IMAGE_DOMAINS = process.env.NEXT_PUBLIC_IMAGE_DOMAINS;
+
+// Vercel demo: the dev backend's CORS allowlist does not include *.vercel.app, so the browser
+// calls /real-api on the demo's own domain and Vercel forwards it to the backend server-side.
+// On Vercel both API base URLs default to the production domain unless set explicitly.
+const REAL_API_PROXY_TARGET =
+  process.env.REAL_API_PROXY_TARGET || 'https://api.dev.fitness-v2.okamoto-hd.com';
+const VERCEL_DOMAIN = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+if (VERCEL_DOMAIN) {
+  process.env.NEXT_PUBLIC_REAL_API_URL ||= `https://${VERCEL_DOMAIN}/real-api`;
+  process.env.NEXT_PUBLIC_API_URL ||= `https://${VERCEL_DOMAIN}/api`;
+}
 const REAL_API_URL =
   process.env.NEXT_PUBLIC_REAL_API_URL || 'https://api.dev.fitness-v2.okamoto-hd.com';
 
@@ -20,6 +31,15 @@ function realApiAssetPatterns(): RemotePattern[] {
 }
 
 const nextConfig: NextConfig = {
+  ...(VERCEL_DOMAIN && {
+    env: {
+      NEXT_PUBLIC_REAL_API_URL: process.env.NEXT_PUBLIC_REAL_API_URL!,
+      NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL!,
+    },
+  }),
+  async rewrites() {
+    return [{ source: '/real-api/:path*', destination: `${REAL_API_PROXY_TARGET}/:path*` }];
+  },
   output: 'standalone',
   // Mock API routes read these via process.cwd(), which standalone's tracing cannot see.
   outputFileTracingIncludes: {
