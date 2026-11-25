@@ -1,0 +1,50 @@
+# Research: Staff Detail — Login History Tab
+
+## R1: Does the real backend support the V0 mockup's multi-device active-session list (3-session cap, per-device terminate)?
+
+**Decision**: No — build against a single account-level "terminate the one session" action instead. Do not fabricate a session list in the frontend.
+
+**Rationale**: `POST /api/v1/admin/staff/{id}/sessions/revoke`'s own OpenAPI description (`src/lib/openapi.real.json:1489`) states: _"Deletes the target's CRM session... the session is a single Redis key overwritten on every sign-in"_ and _"a staff with no live session (never signed in, already logged out, TTL expired) still returns 204. Absence is the state you asked for, not an error."_ There is no companion read/list endpoint anywhere in the generated client (`grep -c "Controller" src/lib/api-real/index.ts` shows only `AdminStaffController` / `AdminStaffPermissionController`, neither exposing a sessions-list operation). This means: at most one session exists per staff account, ever; the frontend cannot read whether one exists, only blindly revoke it (idempotently). The V0 mockup's device/IP/last-active list, "現在のセッション" badge, and 3-device cap describe a data model this backend does not have and was apparently never built to have — the doc language ("single Redis key overwritten on every sign-in") reads as an intentional simplification already decided by the backend team, not a stub awaiting a follow-up.
+
+**Alternatives considered**:
+
+- _Build the full multi-session list against mock/hardcoded data, matching V0 exactly._ Rejected: this is a security/audit-adjacent feature; presenting fabricated session rows (fake devices, fake "current" flags) to an HQ user investigating a real account would be actively misleading, and conflicts with Constitution II (OpenAPI-first — no data invented client-side that the real contract doesn't provide).
+- _Block this spec pending a backend change request for a real session-list endpoint._ Rejected: the single-session revoke action still delivers real, independently valuable security capability (User Story 2's core need — "end this account's CRM access now" — is satisfied without a device list). Descoping now and noting the gap is more useful than blocking the whole feature.
+
+**Addendum (post-implementation, during `/speckit.implement`)**: Product explicitly asked for the "アクティブセッション" card to be built anyway, ahead of backend support — "làm UI mockup data trước, khi API bổ sung tôi sẽ ghép sau" (build the UI against mockup data now; wire it to the real endpoint once it exists). This reverses the "do not build" half of the R1 decision above while leaving the rationale intact: `active-sessions-card.tsx` renders the V0 mockup's per-device row list against a component-local mock array (`MOCK_ACTIVE_SESSIONS`, ported verbatim from V0's `ACTIVE_SESSIONS`), clearly commented as UI-only pending a real session-list endpoint. The one thing that is NOT mocked: confirming termination on any row still calls the real `adminStaffControllerRevokeSessionsMutation` (the only endpoint that exists), so the action has a genuine backend effect even though the row list around it does not yet reflect reality. When a real per-device session-list/terminate endpoint is added, replace `MOCK_ACTIVE_SESSIONS` with a real query and route each row's terminate action to a real per-session target.
+
+**Addendum 2 (2026-09-16, BE schema refresh)**: R1's premise no longer holds — the backend implemented FR-S002. `GET /api/v1/admin/staff/{id}/sessions` now returns `sessions: StaffActiveSessionDto[]` (every live terminal, newest first) alongside `maxConcurrent` (the limit auth-svc actually enforces via `CRM_MAX_CONCURRENT_SESSIONS`, served precisely so the footer copy cannot drift from it), each session gained `lastSeenAt` (the real 最終アクティブ, stamped by the BFF guard and refreshed at most once a minute), and `POST /sessions/revoke` gained an optional `RevokeStaffSessionRequestDto.sessionId` body for per-row targeting (omit it to end every session — the pre-FR-S002 behaviour, kept for a lost account). `active-sessions-card.tsx` was rewired to all four on 2026-09-16: the `data?.session ? [data.session] : []` adapter, the hard-coded 「3デバイス」 footer, and the account-wide revoke are gone. The singular `session` field survives in the schema but is `@deprecated`; do not read it.
+
+## R2: Does the real backend support the V0 mockup's 成功/失敗/ロック login-result classification?
+
+**Decision**: No — display only the fields the endpoint actually returns (日時/認証方式/IP/UA); drop the 結果 column entirely rather than showing a column that would always read "成功".
+
+**Rationale**: `GET /api/v1/admin/staff/{id}/login-histories`'s description (`src/lib/openapi.real.json:2071`) is explicit: _"Successful CRM logins for one staff, newest first... Failed attempts are out of scope here: this is a usage history, not a security audit log."_ The response DTO (`StaffLoginHistoryListResponseDto.items`, `src/lib/api-real/types.gen.ts:847-855`) documents each item's shape as `{ id, loggedInAt, authProvider, sessionId, ipAddress, userAgent }` — no result/status field exists. Rendering a "結果" column that can only ever say "成功" would be decorative (violates Constitution IV: "no decorative UI that adds no information") and would misrepresent the data as if failure/lockout tracking existed when it does not.
+
+**Alternatives considered**:
+
+- _Infer "失敗"/"ロック" some other way (e.g. cross-reference account lockout status)._ Rejected: lockout status is a point-in-time account flag (already surfaced elsewhere on this screen per Y-01/Y-13), not a per-attempt historical record; conflating the two would produce incorrect history (e.g. an account that was briefly locked and later unlocked would show no trace of the lock in a per-row sense).
+
+**Addendum (post-implementation, during `/speckit.implement`)**: Product asked for this column to be added ahead of backend support too, matching the R1 addendum's "build UI-first" direction — "kiểm tra lại spec, thêm cột hiện tại BE đang chưa trả về nhưng cần handle sẵn, sau chỉ cần fill value" (add the column now, ready to handle it, so only the value needs filling in later). Unlike the active-sessions card (which renders entirely mock rows), this is implemented as a forward-compatible optional field: `LoginHistoryEntry.result?: 'success' | 'failed' | 'locked'`, defaulted to `'success'` whenever absent. That default is not a fabrication — it is the one value the endpoint's own contract guarantees for every row it can currently return (only successful sign-ins exist). When the backend adds a real `result` field, the column renders it with zero changes beyond removing the `?? 'success'` fallback in `login-history-tab.tsx`.
+
+**Addendum 2 (2026-09-16, BE schema refresh)**: re-checked against the refreshed schema — `StaffLoginHistoryItemDto` is byte-for-byte unchanged (`{ id, loggedInAt, authProvider, sessionId, ipAddress, userAgent }`), and the endpoint still describes itself as recording successful sign-ins only. R2 and the forward-compatible `result?` field both stand as written. Unlike R1, this gap did **not** close.
+
+## R3: Confirm this screen has already fully moved off `_mock-db` before choosing the data-fetching approach
+
+**Decision**: Build exclusively against `src/lib/api-real` — no mock-db table, no mock route.
+
+**Rationale**: Every existing data-fetching component on `staffs/[id]/page.tsx` already imports exclusively from `src/lib/api-real/@tanstack/react-query.gen.ts` (`permission-history-tab.tsx`, `staff-magic-link-action.tsx`, `staff-permission-card.tsx`, `staff-status-card.tsx`, `page.tsx` itself); a repo-wide search finds zero remaining `_mock-db`/`api-mock` imports anywhere under `staffs/`. Adding a mock-db table for this one tab would be inconsistent with the rest of the page and would need to be thrown away once done — there is no "Phase 1 mock, Phase 2 real" straddle left to bridge here, unlike `020-staff-permission-management`'s original plan (written before this page's migration to the real client completed).
+
+**Alternatives considered**: None seriously — this is a factual check, not a design choice.
+
+## R4: Pattern to copy for the login-history table
+
+**Decision**: Copy `permission-history-tab.tsx`'s structure almost verbatim: `useQuery(adminStaffPermissionControllerStaffLoginHistoriesOptions({ path: { id: staffId }, query: { page: 1, limit: 100 } }))`, `data?.items ?? []`, `data?.pagination.totalItems ?? 0`, the same `Card`/`Empty`/`Table` layout, and the same "cast the untyped item shape to a local interface" trick already used there for `changedBy` (here: a local `LoginHistoryEntry` interface for the `items` array, since `StaffLoginHistoryListResponseDto.items` is typed as `Array<{ [key: string]: unknown }>`).
+
+**Rationale**: Minimizes new patterns on a page that already has an established one for "paginated read-only history table, HQ-gated tab." Reuses the exact query-key/invalidation conventions already proven on this page.
+
+## R5: Pattern to copy for the session-termination action
+
+**Decision**: Copy `staff-deactivate-action.tsx`'s confirm-dialog shape (controlled `AlertDialog` + `useMutation` + `toast.success` on success) but drop its form/reason-textarea machinery entirely — this mutation takes no body, only `{ path: { id: staffId } }`.
+
+**Rationale**: `adminStaffControllerRevokeSessionsMutation` has no request body (per `openapi.real.json:1485-1541`, the only parameter is the path `id`); a reason field would be inventing a requirement the endpoint doesn't have. The simpler `staff-magic-link-action.tsx` shape (button → dialog, no separate confirm-then-fire step) was considered but rejected because this action is destructive (ends an active session) and this screen's convention reserves a confirm-before-firing `AlertDialog` for destructive actions (deactivate, delete) versus fire-then-report for non-destructive ones (magic link issuance) — see `staff-detail.tsx`'s own dialog set, which treats "強制終了" identically (confirm dialog naming the effect, then act).

@@ -1,0 +1,162 @@
+'use client';
+
+import { useState } from 'react';
+
+import { formatDateYYYYMMDD } from '@/utils/date.util';
+import { Eye, EyeOff, Shuffle } from 'lucide-react';
+
+import { DisabledReasonButton } from '@/components/common/disabled-reason-button';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
+interface LockerPasswordEditorProps {
+  currentPassword: string | null;
+  /** FR-009: date the PIN was last changed (operational aid). Hidden when `undefined` is passed */
+  updatedAt?: string | null;
+  isSaving?: boolean;
+  /**
+   * Absorbs the terminology difference between screens.
+   * The slot sheet on locker detail says 「パスワード」, while locker contract detail says 「暗証番号」.
+   */
+  term?: 'パスワード' | '暗証番号';
+  onSave: (password: string) => Promise<unknown> | unknown;
+  /** Set when the viewer may not change the PIN: 変更 stays visible, disabled with this reason */
+  deniedReason?: string;
+}
+
+/** Full-width digits (IME input) count as digits; anything else is dropped */
+function toPinDigits(value: string): string {
+  return value
+    .replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+    .replace(/\D/g, '')
+    .slice(0, 4);
+}
+
+export function LockerPasswordEditor({
+  currentPassword,
+  updatedAt,
+  isSaving = false,
+  term = 'パスワード',
+  onSave,
+  deniedReason,
+}: LockerPasswordEditorProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+
+  const generatePassword = () => {
+    setNewPassword(String(Math.floor(1000 + Math.random() * 9000)));
+  };
+
+  const resetEditor = () => {
+    setNewPassword('');
+    setIsEditing(false);
+  };
+
+  const handleSave = () => {
+    if (newPassword.length !== 4) return;
+    // `onSave` is backed by `mutateAsync`, which rejects on failure. The caller's `onError`
+    // already toasts, so catch here to avoid an unhandled rejection and keep the editor open.
+    Promise.resolve(onSave(newPassword))
+      .then(() => {
+        resetEditor();
+      })
+      .catch(() => {
+        // keep the entered PIN so the user can retry
+      });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+        <div>
+          <p className="text-muted-foreground mb-1 text-xs">現在の{term}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-mono text-sm font-medium tracking-widest">
+              {currentPassword ? (isVisible ? currentPassword : '••••') : '―'}
+            </p>
+            {currentPassword && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={() => setIsVisible((prev) => !prev)}
+              >
+                {isVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {updatedAt !== undefined && (
+          <div>
+            <p className="text-muted-foreground mb-1 text-xs">最終変更日</p>
+            <p className="text-sm font-medium">{updatedAt ? formatDateYYYYMMDD(updatedAt) : '―'}</p>
+          </div>
+        )}
+      </div>
+
+      {!isEditing ? (
+        <div className="border-t pt-4">
+          <DisabledReasonButton
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            disabled={!!deniedReason}
+            disabledReason={deniedReason}
+            onClick={() => setIsEditing(true)}
+          >
+            {term}を変更
+          </DisabledReasonButton>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <p className="text-muted-foreground mb-1 text-xs">新しい{term}（4桁の数字）</p>
+            <div className="flex items-center gap-2">
+              <Input
+                className="max-w-50 font-mono text-sm"
+                placeholder="4桁の数字"
+                maxLength={4}
+                value={newPassword}
+                inputMode="numeric"
+                onChange={(e) => setNewPassword(toPinDigits(e.target.value))}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-1 text-xs"
+                onClick={generatePassword}
+              >
+                <Shuffle className="size-4" />
+                ランダム生成
+              </Button>
+            </div>
+            {newPassword.length > 0 && newPassword.length < 4 && (
+              <p className="text-destructive mt-2 text-xs">4桁の数字を入力してください</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <DisabledReasonButton
+              size="sm"
+              className="text-xs"
+              disabled={newPassword.length !== 4 || isSaving}
+              disabledReason={
+                newPassword.length !== 4
+                  ? `${term}が4桁未満のため保存できません。4桁の数字を入力してください`
+                  : undefined
+              }
+              onClick={handleSave}
+            >
+              変更を保存
+            </DisabledReasonButton>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={resetEditor}>
+              キャンセル
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

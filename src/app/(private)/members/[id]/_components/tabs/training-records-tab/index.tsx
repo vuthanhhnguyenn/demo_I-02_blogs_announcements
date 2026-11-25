@@ -1,0 +1,280 @@
+'use client';
+
+import { useState } from 'react';
+
+import { PAGE_SIZE } from '@/constants/app.constants';
+import { formatDate } from '@/utils/format.util';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { format, startOfMonth, subMonths, subYears } from 'date-fns';
+import { Dumbbell, LoaderCircle } from 'lucide-react';
+
+import { DataStateBoundary } from '@/components/common/data-state-boundary';
+import { TablePagination } from '@/components/common/table-pagination';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
+import { adminMemberActivityControllerTrainingRecordsOptions } from '@/lib/api-real/@tanstack/react-query.gen';
+import { cn } from '@/lib/utils';
+
+type TrainingRecordsPeriod = 'all' | 'this_month' | 'last_3_months' | 'last_1_year';
+
+/**
+ * The real API filters the training log by a `from` date rather than by a named period, so the
+ * four options the tab offers are translated into a window here. `all` sends no bound.
+ *
+ * The bound is built in the operator's own timezone (`date-fns`, as in the member list's
+ * `filter-ranges`): UTC arithmetic reads a day behind through the JST morning, so 今月 asked on
+ * the 1st would send the previous month.
+ */
+function periodToRange(period: TrainingRecordsPeriod): { from?: string } {
+  if (period === 'all') return {};
+  const today = new Date();
+  const from =
+    period === 'this_month'
+      ? startOfMonth(today)
+      : period === 'last_3_months'
+        ? subMonths(today, 3)
+        : subYears(today, 1);
+  return { from: format(from, 'yyyy-MM-dd') };
+}
+
+/** A span under one minute reads in seconds; anything longer rounds to the minute. */
+function formatDuration(seconds: number): { value: number; unit: '秒' | '分' } {
+  return seconds < 60
+    ? { value: seconds, unit: '秒' }
+    : { value: Math.round(seconds / 60), unit: '分' };
+}
+
+const PERIOD_OPTIONS: Array<{ label: string; value: TrainingRecordsPeriod }> = [
+  { label: '全期間', value: 'all' },
+  { label: '今月', value: 'this_month' },
+  { label: '過去3ヶ月', value: 'last_3_months' },
+  { label: '過去1年', value: 'last_1_year' },
+];
+
+export function TrainingRecordsTab({ memberId }: { memberId: string }) {
+  const [period, setPeriod] = useState<TrainingRecordsPeriod>('all');
+  const [shownPeriod, setShownPeriod] = useState<TrainingRecordsPeriod>('all');
+  const [page, setPage] = useState(1);
+  const queryOptions: Parameters<typeof adminMemberActivityControllerTrainingRecordsOptions>[0] = {
+    path: { memberId: memberId },
+    // The real API filters by date window, not by a named period; `recordType`/`sort` are
+    // available but the tab has no control for them.
+    query: { ...periodToRange(period), page, limit: PAGE_SIZE },
+  };
+
+  const { data, isLoading, isFetching, isPlaceholderData, isError, refetch } = useQuery({
+    ...adminMemberActivityControllerTrainingRecordsOptions(queryOptions),
+    // Keep the previous period's rows while the new one loads, so changing the
+    // filter never flashes the table (and its Select) back to a skeleton.
+    placeholderData: keepPreviousData,
+  });
+  const showOverlay = isFetching && !isLoading;
+  // The response now carries a `summary` roll-up computed over the whole filtered set, so all
+  // four figures come from the server instead of only 実施回数 from the page total.
+  const apiSummary = data?.summary;
+  const summary: {
+    trainingCount?: number;
+    totalDuration?: { value: number; unit: '秒' | '分' };
+    totalCalories?: number;
+    mostFrequentRoutineName?: string;
+  } = {
+    trainingCount: apiSummary?.sessions ?? data?.pagination.totalItems,
+    totalDuration: apiSummary != null ? formatDuration(apiSummary.totalDurationSeconds) : undefined,
+    totalCalories: apiSummary?.totalCalories,
+    mostFrequentRoutineName:
+      (apiSummary?.topRoutine as { name?: string | null } | null | undefined)?.name ?? undefined,
+  };
+  const trainingHistory = data?.items ?? [];
+  const total = data?.pagination.totalItems ?? 0;
+  const limit = data?.pagination.limit ?? PAGE_SIZE;
+  const totalPages = Math.ceil(total / limit);
+  // While a new period loads, the figures on screen still belong to the previous one.
+  const captionPeriod = isPlaceholderData ? shownPeriod : period;
+  const selectedPeriodLabel =
+    PERIOD_OPTIONS.find((item) => item.value === captionPeriod)?.label ?? '全期間';
+
+  const handlePeriodChange = (value: TrainingRecordsPeriod) => {
+    if (!isPlaceholderData) setShownPeriod(period);
+    setPeriod(value);
+    setPage(1);
+  };
+
+  return (
+    <div className="flex flex-col gap-4 md:flex-row">
+      <div className="w-full md:w-[60%]">
+        <Card className="gap-0 py-0">
+          {/* Header stays OUTSIDE the boundary: the period Select is the only way out of an
+              empty / error state, so it must never be swapped away. */}
+          <CardHeader className="px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base font-semibold">トレーニング記録</CardTitle>
+              <Select
+                value={period}
+                onValueChange={(value) => handlePeriodChange(value as TrainingRecordsPeriod)}
+                items={PERIOD_OPTIONS}
+              >
+                <SelectTrigger className="h-8 w-32 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  {PERIOD_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <DataStateBoundary
+            isLoading={isLoading}
+            isError={isError}
+            isEmpty={!data}
+            errorTitle="トレーニング記録の取得に失敗しました"
+            onRetry={() => refetch()}
+          >
+            <div className="relative">
+              {showOverlay && (
+                <div className="bg-background/40 pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                  <LoaderCircle className="text-muted-foreground h-6 w-6 animate-spin" />
+                </div>
+              )}
+              {trainingHistory.length === 0 ? (
+                <div className="text-muted-foreground flex flex-col items-center justify-center py-12">
+                  <Dumbbell className="mb-2 size-8 opacity-40" />
+                  <p className="text-sm">この期間にトレーニング記録がありません</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead className="text-xs font-semibold">実施日</TableHead>
+                      <TableHead className="text-xs font-semibold">ルーティン名</TableHead>
+                      <TableHead className="text-right text-xs font-semibold">実施時間</TableHead>
+                      <TableHead className="text-right text-xs font-semibold">
+                        消費カロリー
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className={cn('transition-opacity', showOverlay && 'opacity-50')}>
+                    {trainingHistory.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {formatDate(item.startedAt)}
+                        </TableCell>
+                        <TableCell className="text-sm font-medium break-all whitespace-normal">
+                          {item.routineName ?? item.title ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {item.durationSeconds != null
+                            ? `${formatDuration(item.durationSeconds).value}${formatDuration(item.durationSeconds).unit}`
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {item.totalCalories != null ? `${item.totalCalories}kcal` : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+            {totalPages > 1 && (
+              <TablePagination
+                currentPage={page}
+                totalPages={totalPages}
+                total={total}
+                limit={limit}
+                onPageChange={setPage}
+                isLoading={isFetching}
+              />
+            )}
+          </DataStateBoundary>
+        </Card>
+      </div>
+
+      <div className="w-full md:w-[40%]">
+        <div className="sticky top-0 flex flex-col gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">
+                記録サマリー（{selectedPeriodLabel}）
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4">
+              {/* An error has no figures to show — "—" would read as "no records" */}
+              <DataStateBoundary
+                isLoading={isLoading}
+                isError={isError}
+                isEmpty={false}
+                onRetry={() => refetch()}
+                skeleton={
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div key={index} className="flex flex-col gap-2">
+                        <Skeleton className="h-3 w-20" />
+                        <Skeleton className="h-6 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                }
+              >
+                <div
+                  className={cn(
+                    'grid grid-cols-2 gap-x-8 gap-y-4 transition-opacity',
+                    showOverlay && 'opacity-50',
+                  )}
+                >
+                  <div>
+                    <p className="text-muted-foreground mb-1 text-xs">実施回数</p>
+                    <p className="text-2xl font-bold">
+                      {summary.trainingCount?.toLocaleString() ?? '—'}
+                      <span className="ml-1 text-sm font-normal">回</span>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1 text-xs">合計時間</p>
+                    <p className="text-2xl font-bold">
+                      {summary.totalDuration?.value.toLocaleString() ?? '—'}
+                      <span className="ml-1 text-sm font-normal">
+                        {summary.totalDuration?.unit ?? '分'}
+                      </span>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1 text-xs">合計消費カロリー</p>
+                    <p className="text-sm font-semibold">
+                      {summary.totalCalories?.toLocaleString() ?? '—'} kcal
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1 text-xs">最多ルーティン</p>
+                    <p className="text-sm font-semibold break-all">
+                      {summary.mostFrequentRoutineName ?? '—'}
+                    </p>
+                  </div>
+                </div>
+              </DataStateBoundary>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}

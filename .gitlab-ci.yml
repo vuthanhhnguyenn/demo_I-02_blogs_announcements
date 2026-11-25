@@ -1,0 +1,149 @@
+# Push to dev / staging / prod → build that environment's image → roll its ECS service (see README).
+
+stages: [build, deploy]
+
+workflow:
+  auto_cancel:
+    on_new_commit: conservative
+
+default:
+  interruptible: true
+
+variables:
+  AWS_REGION: ap-northeast-1
+  AWS_DEFAULT_REGION: ap-northeast-1
+
+# CRM_* prefix: a project CI/CD variable with the same name would override these.
+
+.env:dev:
+  variables:
+    CRM_ENV: dev
+    CRM_ACCOUNT_ID: "166107812230"
+    CRM_NAME_PREFIX: fitness-crm-dev
+    CRM_ROLE_ARN: arn:aws:iam::166107812230:role/gitlab-ci-fitness-crm-dev
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+
+.env:staging:
+  variables:
+    CRM_ENV: staging
+    CRM_ACCOUNT_ID: "928276126712"
+    CRM_NAME_PREFIX: fitness-crm-stg
+    CRM_ROLE_ARN: arn:aws:iam::928276126712:role/gitlab-ci-fitness-crm-stg
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+
+.env:prod:
+  variables:
+    CRM_ENV: prod
+    CRM_ACCOUNT_ID: "549908675796"
+    CRM_NAME_PREFIX: fitness-crm-prod
+    CRM_ROLE_ARN: arn:aws:iam::549908675796:role/gitlab-ci-fitness-crm-prod
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+
+.aws:
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  before_script:
+    - test -n "$CRM_ROLE_ARN" && test -n "$CRM_ACCOUNT_ID" || { echo "no environment selected"; exit 1; }
+    - printf '%s' "$GITLAB_OIDC_TOKEN" > /tmp/oidc-token
+    - export AWS_ROLE_ARN="$CRM_ROLE_ARN"
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc-token
+    - export AWS_ROLE_SESSION_NAME="gitlab-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+    - test "$(aws sts get-caller-identity --query Account --output text)" = "$CRM_ACCOUNT_ID" || { echo "not ${CRM_ENV}'s account"; exit 1; }
+    - export ECR_REGISTRY="${CRM_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    - export REPO_URI="${ECR_REGISTRY}/${CRM_NAME_PREFIX}"
+
+# Tag <sha>-<job id>, no :latest: the ECR repository is IMMUTABLE, so a retry must not reuse a tag.
+.build:
+  stage: build
+  extends: .aws
+  image: docker:29.9.2
+  services:
+    - docker:29.9.2-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - apk add --no-cache aws-cli >/dev/null
+    - !reference [.aws, before_script]
+  script:
+    - missing=""
+    - for v in NEXT_PUBLIC_APP_ENV NEXT_PUBLIC_API_URL NEXT_PUBLIC_REAL_API_URL
+      NEXT_PUBLIC_COGNITO_CLIENT_ID NEXT_PUBLIC_COGNITO_REGION; do
+      eval "val=\${$v:-}"; [ -n "$val" ] || missing="$missing $v";
+      done
+    - test -z "$missing" || { echo "not set for environment ${CRM_ENV}:${missing} (Settings > CI/CD > Variables)"; exit 1; }
+    - aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+    - IMAGE="${REPO_URI}:${CI_COMMIT_SHORT_SHA}-${CI_JOB_ID}"
+    - docker build --platform linux/amd64
+      --build-arg NEXT_PUBLIC_APP_ENV
+      --build-arg NEXT_PUBLIC_API_URL
+      --build-arg NEXT_PUBLIC_REAL_API_URL
+      --build-arg NEXT_PUBLIC_IMAGE_DOMAINS
+      --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID
+      --build-arg NEXT_PUBLIC_COGNITO_CLIENT_ID
+      --build-arg NEXT_PUBLIC_COGNITO_REGION
+      --label org.opencontainers.image.revision="$CI_COMMIT_SHA"
+      -t "$IMAGE" .
+    - docker push "$IMAGE"
+    - DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+    - echo "IMAGE_DIGEST=${DIGEST#*@}" > build.env
+    - echo "pushed ${IMAGE} (${DIGEST#*@})"
+
+  artifacts:
+    reports:
+      dotenv: build.env
+    expire_in: 30 days
+  # prepare: receives the environment-scoped NEXT_PUBLIC_* without recording a deployment
+  environment:
+    name: $CRM_ENV
+    action: prepare
+
+build:dev:
+  extends: [.build, .env:dev]
+
+build:staging:
+  extends: [.build, .env:staging]
+
+build:prod:
+  extends: [.build, .env:prod]
+
+.deploy:
+  stage: deploy
+  extends: .aws
+  image:
+    name: amazon/aws-cli:2.17.5
+    entrypoint: [""]
+  interruptible: false
+  script:
+    - yum install -y jq >/dev/null
+    - CLUSTER="${CRM_NAME_PREFIX}-cluster" SERVICE="${CRM_NAME_PREFIX}-service"
+      FAMILY="${CRM_NAME_PREFIX}-task" REPO_URI="$REPO_URI" IMAGE_DIGEST="$IMAGE_DIGEST"
+      ./scripts/ecs-deploy.sh
+  environment:
+    name: $CRM_ENV
+
+deploy:dev:
+  extends: [.deploy, .env:dev]
+  needs: [build:dev]
+  resource_group: crm-dev
+
+deploy:staging:
+  extends: [.deploy, .env:staging]
+  needs: [build:staging]
+  resource_group: crm-staging
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+      when: manual
+      allow_failure: true
+
+deploy:prod:
+  extends: [.deploy, .env:prod]
+  needs: [build:prod]
+  resource_group: crm-prod
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: manual
+      allow_failure: true

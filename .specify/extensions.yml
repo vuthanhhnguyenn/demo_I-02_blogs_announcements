@@ -1,0 +1,20 @@
+hooks:
+  before_specify:
+    - extension: "fitness-crm-ui-loader"
+      command: "speckit.load-external"
+      description: "Load spec requirements from dx-fitness/fitness-spec and UI mockups from dx-fitness/fitness-crm-ui before creating spec"
+      optional: false        # required to run, not optional
+      prompt: "Load external context from fitness-crm-ui repo"
+
+  after_implement:
+    - extension: "verify-parity-harness"
+      command: "verify-parity"
+      description: "Drive the built screen with the execute-testcases Playwright harness and confirm every checklists/parity.md PAR### item against the live app (report-only — no auto-fix). No-ops if the feature has no checklists/parity.md."
+      optional: false        # required to run, not optional
+      prompt: "Run the verify-parity skill against this feature's checklists/parity.md"
+
+    - extension: "review-output-implementation"
+      command: "speckit.review"
+      description: "Review implemented code against project coding rules (code-rule.md) and fix all violations. UI-vs-V0 fidelity is NOT covered here — it is enforced by the checklists/parity.md gate during /speckit.implement."
+      optional: false        # required to run, not optional
+      prompt: "Run post-implementation code review: audit code against constitution/code-rule and fix violations. Do not audit UI parity — that is handled by the parity checklist."

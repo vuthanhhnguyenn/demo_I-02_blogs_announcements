@@ -1,0 +1,228 @@
+import type { TermsRow } from '@/app/api/_mock-db/types/terms.type';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function isoDate(now: Date, offsetDays: number): string {
+  return new Date(now.getTime() + offsetDays * DAY_MS).toISOString().slice(0, 10);
+}
+
+function isoDateTime(now: Date, offsetDays: number): string {
+  return new Date(now.getTime() + offsetDays * DAY_MS).toISOString();
+}
+
+/**
+ * Seed dates are relative to `now()` at seed time, not literal past-tense
+ * literals — so the 9-row set always exercises all three computed statuses
+ * (published/expired/draft) plus a real lineage and a soft-deleted row,
+ * regardless of when the mock DB is seeded (data-model.md's Seed data plan).
+ */
+export function buildTermsSeed(): TermsRow[] {
+  const now = new Date();
+
+  // TODO(phase-2 API integration): remove `/mock/terms-sample.pdf` fallback once
+  // real PDF upload/storage is wired up — this static asset only exists so the
+  // "view PDF" links in terms detail/version-timeline resolve to a real file
+  // while the upload flow itself is still mocked.
+  const placeholderPdf = (_id: string, fileName: string) => ({
+    pdf_url: `/mock/terms-sample.pdf`,
+    pdf_file_name: fileName,
+    pdf_file_size: 430080,
+  });
+
+  const placeholderBody = (title: string, version: string) =>
+    `第1条（総則）\n本規約は「${title}」（${version}）の内容を定めるものです。\n第2条（適用範囲）\n本規約は全ての会員に適用されます。`;
+
+  const rows: TermsRow[] = [
+    {
+      id: 'TM-001',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'membership',
+      brand_enum: 'joyfit',
+      title: '会員規約',
+      version: 'v1.0',
+      ...placeholderPdf('TM-001', 'membership_terms_v1.0.pdf'),
+      body_text: placeholderBody('会員規約', 'v1.0'),
+      effective_from: isoDate(now, -400),
+      effective_to: isoDate(now, -180),
+      display_order: 1,
+      requires_consent: true,
+      remarks: '初版作成',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -405),
+      updated_at: isoDateTime(now, -405),
+    },
+    {
+      id: 'TM-002',
+      parent_terms_id: 'TM-001',
+      prev_terms_id: 'TM-001',
+      terms_type: 'membership',
+      brand_enum: 'joyfit',
+      title: '会員規約',
+      version: 'v1.1',
+      ...placeholderPdf('TM-002', 'membership_terms_v1.1.pdf'),
+      body_text: placeholderBody('会員規約', 'v1.1'),
+      effective_from: isoDate(now, -180),
+      effective_to: null,
+      display_order: 1,
+      requires_consent: true,
+      remarks: '第3条の契約期間を変更',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -185),
+      updated_at: isoDateTime(now, -185),
+    },
+    {
+      id: 'TM-003',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'privacy_policy',
+      brand_enum: 'fit365',
+      title: 'プライバシーポリシー',
+      version: 'v1.0',
+      ...placeholderPdf('TM-003', 'privacy_policy_v1.0.pdf'),
+      body_text: placeholderBody('プライバシーポリシー', 'v1.0'),
+      effective_from: isoDate(now, -90),
+      effective_to: null,
+      display_order: 2,
+      requires_consent: true,
+      remarks: '初版作成',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -95),
+      updated_at: isoDateTime(now, -95),
+    },
+    {
+      id: 'TM-004',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'payment',
+      brand_enum: 'joyfit',
+      title: '決済規約',
+      version: 'v1.0',
+      ...placeholderPdf('TM-004', 'payment_terms_v1.0.pdf'),
+      body_text: placeholderBody('決済規約', 'v1.0'),
+      effective_from: isoDate(now, -60),
+      effective_to: null,
+      display_order: 3,
+      requires_consent: true,
+      remarks: '初版作成',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -65),
+      updated_at: isoDateTime(now, -65),
+    },
+    {
+      id: 'TM-005',
+      parent_terms_id: 'TM-004',
+      prev_terms_id: 'TM-004',
+      terms_type: 'payment',
+      brand_enum: 'joyfit',
+      title: '決済規約（下書き）',
+      version: 'v1.1',
+      ...placeholderPdf('TM-005', 'payment_terms_v1.1.pdf'),
+      body_text: placeholderBody('決済規約', 'v1.1'),
+      effective_from: isoDate(now, 30),
+      effective_to: null,
+      display_order: 3,
+      requires_consent: true,
+      remarks: '手数料に関する条項を追加予定',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -3),
+      updated_at: isoDateTime(now, -3),
+    },
+    {
+      id: 'TM-006',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'companion',
+      brand_enum: 'joyfit',
+      title: '同伴規約',
+      version: 'v1.0',
+      ...placeholderPdf('TM-006', 'companion_terms_v1.0.pdf'),
+      body_text: placeholderBody('同伴規約', 'v1.0'),
+      effective_from: isoDate(now, -200),
+      effective_to: null,
+      display_order: 4,
+      requires_consent: false,
+      remarks: '初版作成',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -205),
+      updated_at: isoDateTime(now, -205),
+    },
+    {
+      id: 'TM-007',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'withdrawal',
+      brand_enum: 'joyfit',
+      title: '退会規約',
+      version: 'v1.0',
+      ...placeholderPdf('TM-007', 'withdrawal_terms_v1.0.pdf'),
+      body_text: placeholderBody('退会規約', 'v1.0'),
+      effective_from: isoDate(now, -300),
+      effective_to: null,
+      display_order: 5,
+      requires_consent: true,
+      remarks: '初版作成',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -305),
+      updated_at: isoDateTime(now, -305),
+    },
+    {
+      id: 'TM-008',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'leave_of_absence',
+      brand_enum: 'joyfit',
+      title: '休会規約',
+      version: 'v1.0',
+      ...placeholderPdf('TM-008', 'leave_of_absence_terms_v1.0.pdf'),
+      body_text: placeholderBody('休会規約', 'v1.0'),
+      effective_from: isoDate(now, -150),
+      effective_to: null,
+      display_order: 6,
+      requires_consent: true,
+      remarks: '初版作成',
+      is_deleted: false,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -155),
+      updated_at: isoDateTime(now, -155),
+    },
+    {
+      id: 'TM-009',
+      parent_terms_id: null,
+      prev_terms_id: null,
+      terms_type: 'membership',
+      brand_enum: 'fit365',
+      title: '会員規約（旧版）',
+      version: 'v1.0',
+      ...placeholderPdf('TM-009', 'membership_terms_fit365_v1.0.pdf'),
+      body_text: placeholderBody('会員規約', 'v1.0'),
+      effective_from: isoDate(now, -500),
+      effective_to: isoDate(now, -100),
+      display_order: 1,
+      requires_consent: true,
+      remarks: '初版作成',
+      is_deleted: true,
+      created_by: '管理者',
+      updated_by: '管理者',
+      created_at: isoDateTime(now, -505),
+      updated_at: isoDateTime(now, -101),
+    },
+  ];
+
+  return rows;
+}

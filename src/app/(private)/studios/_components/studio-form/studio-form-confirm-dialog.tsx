@@ -1,0 +1,97 @@
+'use client';
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+import type { StudioFormMode, StudioFormValues } from '../studio-form.schema';
+
+interface StudioFormConfirmDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  mode: StudioFormMode;
+  values: Partial<StudioFormValues>;
+  storeName?: string;
+  onConfirm: () => void;
+  /** Saving, or an image still uploading: the confirm button waits */
+  isSubmitting?: boolean;
+}
+
+const MODE_LABELS: Record<StudioFormMode, { title: string; confirmLabel: string }> = {
+  create: {
+    title: '以下の内容で登録します。よろしいですか？',
+    confirmLabel: 'この内容で登録する',
+  },
+  edit: {
+    title: 'この内容で変更を保存しますか？',
+    confirmLabel: 'この内容で保存する',
+  },
+};
+
+const STUDIO_TYPE_LABELS: Record<string, string> = {
+  'studio-lesson': 'スタジオレッスン用',
+  pt: 'PT用',
+  'body-care': 'ボディケア用',
+};
+
+export function StudioFormConfirmDialog({
+  open,
+  onOpenChange,
+  mode,
+  values,
+  storeName,
+  onConfirm,
+  isSubmitting = false,
+}: StudioFormConfirmDialogProps) {
+  const labels = MODE_LABELS[mode];
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent className="sm:max-w-[480px]">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{labels.title}</AlertDialogTitle>
+          <AlertDialogDescription className="sr-only">保存内容の確認</AlertDialogDescription>
+        </AlertDialogHeader>
+        {/* min-w-0 + minmax(0,1fr) + wrap-anywhere: a long unbroken name wraps inside the
+            value cell instead of widening the dialog past its buttons (same layout as D-02 Bug No.12) */}
+        <div className="bg-muted/50 min-w-0 rounded-lg p-4">
+          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-x-4 gap-y-3 text-left">
+            <span className="text-muted-foreground text-sm">スタジオ名</span>
+            <span className="text-sm wrap-anywhere">{values.name || '（未入力）'}</span>
+            <span className="text-muted-foreground text-sm">所属店舗</span>
+            <span className="text-sm wrap-anywhere">{storeName || '（未選択）'}</span>
+            <span className="text-muted-foreground text-sm">スタジオ区分</span>
+            <span className="text-sm">
+              {values.studioType ? STUDIO_TYPE_LABELS[values.studioType] : '（未選択）'}
+            </span>
+            <span className="text-muted-foreground text-sm">物理定員</span>
+            <span className="text-sm">
+              {values.capacity ? `${values.capacity}名` : '（未入力）'}
+            </span>
+            <span className="text-muted-foreground text-sm">バッファ値</span>
+            <span className="text-sm">
+              {values.bufferValue !== undefined ? `${values.bufferValue}名` : '（未入力）'}
+            </span>
+            <span className="text-muted-foreground text-sm">利用可能時間</span>
+            <span className="text-sm wrap-anywhere">{values.operatingHours || '（未入力）'}</span>
+            <span className="text-muted-foreground text-sm">ステータス</span>
+            <span className="text-sm">{values.status === 'inactive' ? '無効' : '有効'}</span>
+          </div>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>キャンセル</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm} disabled={isSubmitting}>
+            {labels.confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
